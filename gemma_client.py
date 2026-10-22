@@ -211,6 +211,26 @@ def _extract_text(response) -> str:
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
+def _get_api_key() -> str | None:
+    """Get the API key from st.secrets (Streamlit Cloud) or .env (local).
+
+    Checks st.secrets first, then falls back to the .env file.
+    Returns None if no key is found.
+    """
+    # Try Streamlit secrets first (Streamlit Community Cloud, or local
+    # .streamlit/secrets.toml)
+    try:
+        import streamlit as st
+        if "GOOGLE_API_KEY" in st.secrets:
+            return st.secrets["GOOGLE_API_KEY"]
+    except Exception:
+        pass  # Not in a Streamlit script context (e.g., test_client.py)
+
+    # Fall back to .env (local development)
+    load_dotenv()
+    return os.getenv("GOOGLE_API_KEY")
+
+
 def read_label(image_bytes: bytes, category: str | None = None) -> str:
     """Read a product label from image bytes using Gemma 4.
 
@@ -226,13 +246,13 @@ def read_label(image_bytes: bytes, category: str | None = None) -> str:
         LabelReaderError: For any user-facing problem (missing key,
                          rate limit, network, blocked response, etc.).
     """
-    # 1. Load and check the API key
-    load_dotenv()
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # 1. Load and check the API key (st.secrets on Cloud, .env locally)
+    api_key = _get_api_key()
     if not api_key or api_key == "your_api_key_here":
         raise LabelReaderError(
-            "GOOGLE_API_KEY is not set. Edit .env and add your key "
-            "(get one at https://aistudio.google.com/apikey)."
+            "GOOGLE_API_KEY is not set. Add it to Streamlit secrets "
+            "(Cloud) or .env (local). Get one at "
+            "https://aistudio.google.com/apikey."
         )
 
     # 2. Preprocess the image
