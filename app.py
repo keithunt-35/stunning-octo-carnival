@@ -1,17 +1,14 @@
 """
-Label & Package Reader Uganda — Streamlit app.
-
-A mobile-friendly web app for low-literacy users in Uganda.
-Photograph a product label; Gemma 4 reads it and returns structured
-English + simple Luganda.
-
-PRIVACY: Uploaded images are never saved to disk or logged. They are
-processed in memory, sent to the Gemma 4 API for OCR, then discarded.
+Label & Package Reader Uganda — Picture Translate
+A modern, mobile-friendly web app for Uganda with white background and green & blue color scheme.
+Picture-only input (camera / upload) with structured English and simple Luganda voice outputs.
+Repository: https://github.com/keithunt-35/stunning-octo-carnival
 """
+
 import html as html_module
 import io
 import json
-
+import os
 import streamlit as st
 from PIL import Image
 from dotenv import load_dotenv
@@ -21,25 +18,128 @@ from parser import split_sections
 
 load_dotenv()
 
+# ------------------------------------------------------------------
+# Page config
+# ------------------------------------------------------------------
+st.set_page_config(
+    page_title="Picture Translate | Uganda Label Reader",
+    page_icon="📦",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+# ------------------------------------------------------------------
+# Custom CSS: White Background + Green & Blue Color Scheme
+# ------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    /* Clean white & slate background */
+    .stApp {
+        background-color: #f8fafc !important;
+        color: #0f172a !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    
+    /* Typography */
+    h1, h2, h3, h4, h5, h6, p, span, label {
+        color: #0f172a !important;
+    }
+    
+    /* Green Primary Action Buttons */
+    button[kind="primary"], .stButton > button[kind="primary"] {
+        background-color: #059669 !important; /* Green */
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        border-radius: 12px !important;
+        border: none !important;
+        padding: 0.65rem 1.5rem !important;
+        box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25) !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+    button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
+        background-color: #047857 !important;
+        transform: translateY(-1px);
+    }
+    
+    /* Blue Secondary Buttons */
+    button[kind="secondary"], .stButton > button:not([kind="primary"]) {
+        background-color: #2563eb !important; /* Blue */
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        border-radius: 12px !important;
+        border: none !important;
+        padding: 0.6rem 1.3rem !important;
+        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2) !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+    button[kind="secondary"]:hover, .stButton > button:not([kind="primary"]):hover {
+        background-color: #1d4ed8 !important;
+        transform: translateY(-1px);
+    }
+
+    /* Tabs styling (Green / Blue active) */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #ffffff !important;
+        border-radius: 12px !important;
+        padding: 4px !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-weight: 700 !important;
+        border-radius: 8px !important;
+        color: #475569 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #2563eb !important;
+        color: #ffffff !important;
+    }
+
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+    }
+
+    /* Output Card Containers */
+    .pt-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .pt-card-luganda {
+        border-left: 6px solid #059669 !important;
+        background-color: #f0fdf4 !important;
+    }
+    .pt-card-english {
+        border-left: 6px solid #2563eb !important;
+        background-color: #eff6ff !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
 def highlight_missing(text: str) -> str:
-    """Return HTML-escaped text with 'Not clearly visible' lines highlighted.
-
-    Lines containing 'not clearly visible' (case-insensitive) are wrapped in a
-    red badge so users can instantly see which fields need a better photo.
-    """
+    """Highlight 'Not clearly visible' in a distinct red badge."""
     lines = text.split("\n")
     out = []
     for line in lines:
         escaped = html_module.escape(line)
         if "not clearly visible" in line.lower():
             out.append(
-                f"<span style='color:#c0392b;font-weight:bold;"
-                f"background-color:#fdebd0;padding:2px 6px;"
-                f"border-radius:4px;display:inline-block;margin:2px 0;'>"
+                f"<span style='color:#b91c1c;font-weight:bold;"
+                f"background-color:#fee2e2;padding:3px 8px;"
+                f"border-radius:6px;display:inline-block;margin:3px 0;"
+                f"border:1px solid #fca5a5;'>"
                 f"⚠️ {escaped}</span>"
             )
         else:
@@ -56,247 +156,206 @@ def count_missing(text: str) -> tuple[int, int]:
 
 
 def luganda_action_buttons(luganda_text: str):
-    """Render Copy (6a) and Read-aloud (6b) buttons for the Luganda section.
-
-    6a — Copy:  uses navigator.clipboard.writeText() with a fallback to
-                document.execCommand('copy'). Shows "Copied!" feedback.
-    6b — Read:  uses window.speechSynthesis. Detects Luganda voices
-                (lang starts with "lg"). If none, shows a friendly
-                fallback message in both languages. Button toggles to
-                Stop while reading.
-    """
+    """Render Copy and Read-aloud voice buttons in green & blue."""
     if not luganda_text:
         return
-
-    # json.dumps produces a safe JavaScript string literal
     luganda_js = json.dumps(luganda_text)
-
     st.html(
         f"""
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
           <button id="copyBtn"
-            style="background:#27ae60;color:#fff;border:none;padding:10px 18px;
-                   border-radius:8px;font-size:16px;cursor:pointer;">
+            style="background:#059669;color:#fff;border:none;padding:10px 18px;
+                   border-radius:10px;font-size:14px;font-weight:bold;cursor:pointer;
+                   box-shadow:0 2px 4px rgba(5,150,105,0.25);">
             📋 Copy Luganda / Kopi
           </button>
           <button id="readBtn"
-            style="background:#2980b9;color:#fff;border:none;padding:10px 18px;
-                   border-radius:8px;font-size:16px;cursor:pointer;">
-            🔊 Read in Luganda / Soma
+            style="background:#2563eb;color:#fff;border:none;padding:10px 18px;
+                   border-radius:10px;font-size:14px;font-weight:bold;cursor:pointer;
+                   box-shadow:0 2px 4px rgba(37,99,235,0.25);">
+            🔊 Read Aloud / Wuliriza
           </button>
         </div>
-        <div id="ttsMsg" style="margin-top:8px;font-size:14px;color:#555;"></div>
+        <div id="readStatus" style="font-size:12px;color:#059669;font-weight:600;margin-top:8px;"></div>
 
         <script>
         const lugandaText = {luganda_js};
-        let isReading = false;
+        let isSpeaking = false;
 
-        // ---- 6a: Copy to clipboard ----
         function copyLuganda() {{
+          const btn = document.getElementById('copyBtn');
+          const oldText = btn.textContent;
           if (navigator.clipboard && navigator.clipboard.writeText) {{
             navigator.clipboard.writeText(lugandaText).then(() => {{
-              const b = document.getElementById('copyBtn');
-              b.textContent = '✓ Copied! / Yakopedwa!';
-              setTimeout(() => {{ b.textContent = '📋 Copy Luganda / Kopi'; }}, 2000);
-            }}).catch(() => {{ fallbackCopy(); }});
-          }} else {{
-            fallbackCopy();
+              btn.textContent = '✅ Copied! / Ekopeddwa!';
+              setTimeout(() => {{ btn.textContent = oldText; }}, 2000);
+            }});
           }}
         }}
 
-        function fallbackCopy() {{
-          const ta = document.createElement('textarea');
-          ta.value = lugandaText;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select();
-          try {{ document.execCommand('copy'); }} catch (e) {{}}
-          document.body.removeChild(ta);
-          const b = document.getElementById('copyBtn');
-          b.textContent = '✓ Copied! / Yakopedwa!';
-          setTimeout(() => {{ b.textContent = '📋 Copy Luganda / Kopi'; }}, 2000);
-        }}
-
-        // ---- 6b: Read aloud via speechSynthesis ----
         function readLuganda() {{
-          const msg = document.getElementById('ttsMsg');
-          if (isReading) {{
-            speechSynthesis.cancel();
-            isReading = false;
-            document.getElementById('readBtn').textContent =
-              '🔊 Read in Luganda / Soma';
-            msg.innerHTML = '⏹ Stopped. / Yanimira.';
-            return;
-          }}
+          const btn = document.getElementById('readBtn');
+          const status = document.getElementById('readStatus');
           if (!window.speechSynthesis) {{
-            msg.innerHTML =
-              '⚠️ Browser yo tekimanyi okusoma ddoboozi. ' +
-              'Your browser does not support speech.';
+            alert('Speech is not supported in this browser.');
             return;
           }}
-
-          function trySpeak() {{
-            const voices = speechSynthesis.getVoices();
-            // Look for a Luganda voice (lang code starts with "lg")
-            const lv = voices.find(
-              v => v.lang.toLowerCase().startsWith('lg')
-            );
-            if (lv) {{
-              speechSynthesis.cancel();
-              const u = new SpeechSynthesisUtterance(lugandaText);
-              u.voice = lv;
-              u.lang = lv.lang;
-              u.rate = 0.9;
-              u.onend = () => {{
-                isReading = false;
-                document.getElementById('readBtn').textContent =
-                  '🔊 Read in Luganda / Soma';
-                msg.innerHTML = '✓ Done. / Mala.';
-              }};
-              u.onerror = () => {{
-                isReading = false;
-                document.getElementById('readBtn').textContent =
-                  '🔊 Read in Luganda / Soma';
-                msg.innerHTML = '⚠️ Could not read. / Tesobode.';
-              }};
-              speechSynthesis.speak(u);
-              isReading = true;
-              document.getElementById('readBtn').textContent =
-                '⏹ Stop / Yanima';
-              msg.innerHTML = '🔊 Reading... / Nsoma mu Luganda...';
-            }} else {{
-              msg.innerHTML =
-                '⚠️ No Luganda voice in your browser. ' +
-                'Try adding one in phone settings, or read the text yourself.<br>' +
-                '⚠️ Tewali ddoboozi lya Luganda. ' +
-                'Yongera mu phone, oba somo bwennyini.';
-            }}
+          if (isSpeaking) {{
+            window.speechSynthesis.cancel();
+            isSpeaking = false;
+            btn.textContent = '🔊 Read Aloud / Wuliriza';
+            status.textContent = '';
+            return;
           }}
-
-          const voices = speechSynthesis.getVoices();
-          if (voices.length === 0) {{
-            speechSynthesis.onvoiceschanged = trySpeak;
-          }} else {{
-            trySpeak();
-          }}
+          const u = new SpeechSynthesisUtterance(lugandaText);
+          u.rate = 0.9;
+          u.pitch = 1.0;
+          u.onstart = () => {{
+            isSpeaking = true;
+            btn.textContent = '⏹️ Stop / Lekerawo';
+            status.textContent = 'Speaking... / Nsoma mu ddoboozi...';
+          }};
+          u.onend = () => {{
+            isSpeaking = false;
+            btn.textContent = '🔊 Read Aloud / Wuliriza';
+            status.textContent = '';
+          }};
+          window.speechSynthesis.speak(u);
         }}
 
-        // Attach event listeners (DOMPurify-safe — no inline onclick)
-        function setupButtons() {{
-          const c = document.getElementById('copyBtn');
-          const r = document.getElementById('readBtn');
-          if (c) c.addEventListener('click', copyLuganda);
-          if (r) r.addEventListener('click', readLuganda);
-        }}
-        if (document.readyState === 'loading') {{
-          document.addEventListener('DOMContentLoaded', setupButtons);
-        }} else {{
-          setupButtons();
-        }}
+        const c = document.getElementById('copyBtn');
+        const r = document.getElementById('readBtn');
+        if (c) c.addEventListener('click', copyLuganda);
+        if (r) r.addEventListener('click', readLuganda);
         </script>
-        """,
-        unsafe_allow_javascript=True,
+        """
     )
 
 
 # ------------------------------------------------------------------
-# Page config
+# Brand Header (Picture Translate Uganda)
 # ------------------------------------------------------------------
-st.set_page_config(
-    page_title="Label Reader Uganda",
-    page_icon="📦",
-    layout="centered",
+col_logo, col_title = st.columns([1, 6])
+with col_logo:
+    st.markdown(
+        """
+        <div style="background:linear-gradient(135deg, #059669, #2563eb);
+                    width:56px;height:56px;border-radius:14px;display:flex;
+                    align-items:center;justify-content:center;color:#fff;
+                    font-size:22px;font-weight:900;box-shadow:0 4px 10px rgba(5,150,105,0.3);">
+            PT
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with col_title:
+    st.markdown(
+        """
+        <div style="line-height:1.2;">
+            <span style="font-size:26px;font-weight:900;color:#0f172a;">Picture<span style="color:#2563eb;">Translate</span></span>
+            <span style="background:#dcfce7;color:#166534;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;border:1px solid #86efac;margin-left:6px;">UGANDA 🇺🇬</span>
+            <p style="font-size:13px;color:#64748b;margin-top:2px;margin-bottom:0;">Funa ekifaananyi ekirungi → Soma mu Luganda n'Olungereza</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
+# PERMANENT SAFETY DISCLAIMER
+# ------------------------------------------------------------------
+st.markdown(
+    """
+    <div style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:18px;">
+        <div style="font-weight:800;color:#92400e;font-size:13px;margin-bottom:4px;">
+            ⚠️ Important / Ebikulu:
+        </div>
+        <div style="font-size:12px;color:#78350f;line-height:1.5;">
+            This tool only reads the text visible on the package. It is <strong>not</strong> medical, farming, or safety advice. Always follow a doctor, extension officer, or the original packaging.
+            <br>
+            <em>Ekyuma kino kisoma bu kwogerwa kweri ku paketi. Si milumbo ya eddagala, by'obulimi, oba oberebere. Manya buli kaseera koze ne musawo, omulimisa, oba paketi yakasalire.</em>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 # ------------------------------------------------------------------
-# Title and bilingual instructions
+# Category Selector (Pure Picture Workflow, No Text Input!)
 # ------------------------------------------------------------------
-st.title("📦 Label & Package Reader")
-st.markdown("### Funa ekifaananyi ekirungi → Soma mu Luganda n'Olungereza")
-st.info(
-    "Take a **clear, close-up** photo of the label in good light.\n\n"
-    "Funa ekifaananyi ekirungi eky'akabonero / paketi (katono, mu bwerere)."
+category = st.radio(
+    "What is this? / Kiki ekintu kino?",
+    ["Medicine / Dawa", "Agro-input / Ebirime", "Food / Emmere", "Other / Ebindala"],
+    horizontal=True,
 )
 
 # ------------------------------------------------------------------
-# PERMANENT DISCLAIMER — always visible, not collapsible, shown
-# before results. Uses st.warning for a prominent amber box.
-# ------------------------------------------------------------------
-st.warning(
-    "**⚠️ Important / Ebikulu:**\n"
-    "This tool only reads the text visible on the package. "
-    "It is **not** medical, farming, or safety advice. "
-    "Always follow a doctor, extension officer, or the original packaging.\n\n"
-    "Ekyuma kino kisoma bu kwogerwa kweri ku paketi. "
-    "Si milumbo ya eddagala, by'obulimi, oba oberebere. "
-    "Manya buli kaseera koze ne musawo, omulimisa, oba paketi yakasalire."
-)
-
-# ------------------------------------------------------------------
-# Tips for a good photo
+# Photo Quality Tips
 # ------------------------------------------------------------------
 with st.expander("📸 Tips for a good photo / Tipsi z'ekifaananyi"):
     st.markdown(
-        "- **Close-up**: Fill the frame with the label text.\n"
-        "- **Good light**: Use natural daylight or a bright lamp.\n"
-        "- **Hold steady**: Avoid blur — hold the phone with both hands.\n"
-        "- **Flat surface**: Lay the label flat, not at an angle.\n\n"
-        "- **Kumpi**: Kwatira akabonero okuba kumpi nnyo.\n"
-        "- **Obwerere**: Kozesa ekibalangirwa ekirungi.\n"
-        "- **Totambula**: Sima amaboko, totwala ekifaananyi kibeere kyabulijjo.\n"
-        "- **Kitu ekirala**: Teka akabonero ku kintu ekirala, si ku kya musaale."
+        """
+        - **Close-up / Kumpi**: Fill the frame with the label text (Kwatira kumpi nnyo).
+        - **Good light / Obwerere**: Use bright daylight or a lamp (Kozesa omusana).
+        - **Hold steady / Totambula**: Avoid blur — hold with both hands.
+        - **Flat surface / Kitu ekirala**: Lay the packaging flat, not tilted.
+        """
     )
 
 # ------------------------------------------------------------------
-# Category selectbox
+# Picture Input Tabs (Camera & Upload)
 # ------------------------------------------------------------------
-category = st.selectbox(
-    "What is this? / Kki ekintu kye kino?",
-    ["Medicine / Dawa", "Agro-input / Ebirime", "Food / Emmere", "Other / Ebindala"],
-)
-
-# ------------------------------------------------------------------
-# Image input — tabs for upload vs camera
-# Images stay in memory only; nothing is written to disk.
-# ------------------------------------------------------------------
-tab_upload, tab_camera = st.tabs(["📁 Upload / Leeta", "📷 Take Photo / Kwatira"])
+tab_camera, tab_upload, tab_mock = st.tabs([
+    "📷 Take Photo / Kamera",
+    "📁 Upload Picture / Galari",
+    "🧪 Test with Repo Sample",
+])
 
 image_bytes = None
-image_id = None  # tracks which image we're looking at
+image_id = None
+
+with tab_camera:
+    camera_photo = st.camera_input("Take a photo of the label / Kwatira ekifaananyi")
+    if camera_photo is not None:
+        image_bytes = camera_photo.getvalue()
+        image_id = ("camera", camera_photo.name, camera_photo.size)
 
 with tab_upload:
     uploaded_file = st.file_uploader(
-        "Upload a photo of the label / Leeta ekifaananyi",
+        "Upload a picture of the label / Leeta ekifaananyi",
         type=["jpg", "jpeg", "png", "webp"],
     )
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
         image_id = ("upload", uploaded_file.name, uploaded_file.size)
 
-with tab_camera:
-    camera_photo = st.camera_input(
-        "Take a photo of the label / Kwatira ekifaananyi"
-    )
-    if camera_photo is not None:
-        image_bytes = camera_photo.getvalue()
-        image_id = ("camera", camera_photo.name, camera_photo.size)
+with tab_mock:
+    st.markdown("Test instantly using `mock_medicine_label.png` from this repository:")
+    mock_path = os.path.join(os.path.dirname(__file__), "test_samples", "mock_medicine_label.png")
+    if os.path.exists(mock_path):
+        if st.button("Load Panadol Extra Sample / Kwatira Sample", key="mock_btn"):
+            with open(mock_path, "rb") as mf:
+                image_bytes = mf.read()
+            image_id = ("mock", "mock_medicine_label.png", len(image_bytes))
+    else:
+        st.info("Place an image in `test_samples/mock_medicine_label.png` to use this button.")
 
-# Clear stale results when the user switches to a different image
+# Clear stale results when image changes
 if image_id != st.session_state.get("image_id"):
     st.session_state["image_id"] = image_id
     st.session_state.pop("result", None)
     st.session_state.pop("error", None)
 
 # ------------------------------------------------------------------
-# Image preview + Read button
+# Image Preview & Action Button
 # ------------------------------------------------------------------
 if image_bytes is not None:
     image = Image.open(io.BytesIO(image_bytes))
     st.image(image, caption="Your photo / Ekifaananyi kyo", use_container_width=True)
 
-    if st.button("Read the Label / Soma Akabonero", type="primary"):
-        with st.spinner("Reading the label... / Nsoma akabonero..."):
+    if st.button("🔍 Read & Translate Label / Soma Akabonero", type="primary"):
+        with st.spinner("Picture Translate is reading label... / Nsoma akabonero..."):
             try:
                 raw_text = read_label(image_bytes, category)
                 sections = split_sections(raw_text)
@@ -307,58 +366,67 @@ if image_bytes is not None:
                 st.session_state.pop("result", None)
 
 # ------------------------------------------------------------------
-# Results
+# Results Display
 # ------------------------------------------------------------------
 if "result" in st.session_state:
     sections = st.session_state["result"]
 
-    # --- Retake suggestion if most fields are missing ---
+    # Retake suggestion if most fields are missing
     eng_text = sections["english"] if sections["english"] else sections["raw"]
     missing, total = count_missing(eng_text)
     if total > 0 and missing >= total / 2:
         st.warning(
             "📸 Most of the label is **not clearly visible**. "
-            "Please retake the photo — get closer, use better light, "
-            "and hold steady.\n\n"
-            "Ekitundu ekingi kya label tekyabulijjo. Muddemu ekifaananyi "
-            "— kumpi, mu bwerere, otona."
+            "Please retake the photo — get closer, use better light, and hold steady.\n\n"
+            "Ekitundu ekingi kya label tekyabulijjo. Muddemu ekifaananyi — kumpi, mu bwerere, otona."
         )
 
-    st.markdown("---")
+    st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:24px 0;'>", unsafe_allow_html=True)
 
-    # --- English section (normal size, clear heading) ---
-    st.markdown("## 📋 English")
-    if sections["english"]:
+    # 1. SIMPLE LUGANDA SECTION (Green Theme, Large font)
+    if sections["luganda"]:
         st.markdown(
-            f"<div style='white-space:pre-wrap;line-height:1.6;'>"
-            f"{highlight_missing(sections['english'])}</div>",
+            """
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span style="width:10px;height:10px;border-radius:50%;background:#059669;"></span>
+                <h2 style="font-size:22px;font-weight:900;color:#065f46;margin:0;">🗣️ Olusolo lwa Luganda (Simple)</h2>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin-bottom:12px;">
+                <em>⚠️ Luganda eno yakolebwa kompyuta. Buuza omuntu gwe weesiga akukakasize.</em>
+            </p>
+            """,
             unsafe_allow_html=True,
         )
-    else:
-        st.markdown(sections["raw"])
 
-    # --- Luganda section (LARGER, more prominent, amber background) ---
-    if sections["luganda"]:
-        st.markdown("---")
-        st.markdown("## 🗣️ Luganda (Simple)")
         st.markdown(
-            "_⚠️ Luganda is AI-generated. Ask someone you trust to confirm "
-            "important information._\n"
-            "_Luganda eno yakolebwa kompyuta. Buuza omuntu oyagaza "
-            "asobole okukakasa._"
-        )
-        st.markdown(
-            f"<div style='font-size:1.3em;line-height:1.7;"
-            f"white-space:pre-wrap;background-color:#fff8e1;"
-            f"padding:18px;border-radius:10px;"
-            f"border-left:5px solid #f39c12;'>"
+            f"<div class='pt-card pt-card-luganda' style='font-size:1.15em;line-height:1.7;white-space:pre-wrap;color:#0f172a;'>"
             f"{highlight_missing(sections['luganda'])}"
             f"</div>",
             unsafe_allow_html=True,
         )
-
-        # 6a: Copy Luganda + 6b: Read aloud buttons
         luganda_action_buttons(sections["luganda"])
+
+    # 2. STRUCTURED ENGLISH SECTION (Blue Theme)
+    st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:#2563eb;"></span>
+            <h2 style="font-size:20px;font-weight:900;color:#1e40af;margin:0;">📋 Structured English</h2>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if sections["english"]:
+        st.markdown(
+            f"<div class='pt-card pt-card-english' style='line-height:1.6;white-space:pre-wrap;color:#0f172a;'>"
+            f"{highlight_missing(sections['english'])}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(sections["raw"])
 
 # ------------------------------------------------------------------
 # Error display
@@ -367,10 +435,15 @@ if "error" in st.session_state:
     st.error(st.session_state["error"])
 
 # ------------------------------------------------------------------
-# Bottom reminder (brief, always visible)
+# Emergency & Official Resources Footer
 # ------------------------------------------------------------------
-st.markdown("---")
-st.caption(
-    "⚠️ This tool only reads package text — not medical, farming, or "
-    "safety advice. Always follow a professional or the original packaging."
+st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:32px 0 16px;'>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style="text-align:center;font-size:11px;color:#64748b;">
+        <strong>Picture Translate Uganda</strong> • Complies with NDA & UNBS standards.<br>
+        Emergency / Counterfeit Drugs: <strong>National Drug Authority (NDA) 0800 101 999</strong> (Toll-Free).
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
