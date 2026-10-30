@@ -18,7 +18,7 @@ from PIL import Image, ImageOps
 from google import genai
 from google.genai import types
 
-from prompts import SYSTEM_PROMPT, build_user_prompt
+from prompts import build_system_prompt, build_user_prompt
 
 # ------------------------------------------------------------------
 # Configuration
@@ -93,7 +93,7 @@ def preprocess_image(image_bytes: bytes) -> bytes:
 # ------------------------------------------------------------------
 # API call
 # ------------------------------------------------------------------
-def _call_api(client, jpeg_bytes: bytes, user_prompt: str):
+def _call_api(client, jpeg_bytes: bytes, user_prompt: str, system_prompt: str):
     """Call the Gemma model with retries for transient 500 errors.
 
     Returns the response object. Raises LabelReaderError on failure.
@@ -110,8 +110,9 @@ def _call_api(client, jpeg_bytes: bytes, user_prompt: str):
                     user_prompt,
                 ],
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
+                    system_instruction=system_prompt,
                     temperature=TEMPERATURE,
+                    response_mime_type="application/json",
                 ),
             )
             return response
@@ -264,7 +265,8 @@ def read_label(image_bytes: bytes, category: str | None = None) -> str:
             f"photo (JPG, PNG, or WebP). (Details: {e})"
         ) from e
 
-    # 3. Build the user prompt
+    # 3. Build the prompts (category-aware)
+    system_prompt = build_system_prompt(category)
     user_prompt = build_user_prompt(category)
 
     # 4. Call the API (with a 60s request timeout so calls can't hang forever)
@@ -272,7 +274,7 @@ def read_label(image_bytes: bytes, category: str | None = None) -> str:
         api_key=api_key,
         http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
     )
-    response = _call_api(client, jpeg_bytes, user_prompt)
+    response = _call_api(client, jpeg_bytes, user_prompt, system_prompt)
 
     # 5. Extract and return the text
     return _extract_text(response)
